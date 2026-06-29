@@ -8,6 +8,7 @@ plugins=(git gitfast last-working-dir common-aliases zsh-syntax-highlighting his
 
 # (macOS-only) Prevent Homebrew from reporting - https://github.com/Homebrew/brew/blob/master/docs/Analytics.md
 export HOMEBREW_NO_ANALYTICS=1
+[[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
 
 # Disable warning about insecure completion-dependent directories
 ZSH_DISABLE_COMPFIX=true
@@ -25,34 +26,6 @@ type -a rbenv > /dev/null && eval "$(rbenv init -)"
 export PYENV_VIRTUALENV_DISABLE_PROMPT=1
 type -a pyenv > /dev/null && eval "$(pyenv init -)" && eval "$(pyenv virtualenv-init - 2> /dev/null)" && RPROMPT+='[🐍 $(pyenv version-name)]'
 
-# Load nvm (to manage your node versions)
-export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
-
-# Call `nvm use` automatically in a directory with a `.nvmrc` file
-autoload -U add-zsh-hook
-load-nvmrc() {
-  if nvm -v &> /dev/null; then
-    local node_version="$(nvm version)"
-    local nvmrc_path="$(nvm_find_nvmrc)"
-
-    if [ -n "$nvmrc_path" ]; then
-      local nvmrc_node_version=$(nvm version "$(cat "${nvmrc_path}")")
-
-      if [ "$nvmrc_node_version" = "N/A" ]; then
-        nvm install
-      elif [ "$nvmrc_node_version" != "$node_version" ]; then
-        nvm use --silent
-      fi
-    elif [ "$node_version" != "$(nvm version default)" ]; then
-      nvm use default --silent
-    fi
-  fi
-}
-type -a nvm > /dev/null && add-zsh-hook chpwd load-nvmrc
-type -a nvm > /dev/null && load-nvmrc
-
 # Rails and Ruby uses the local `bin` folder to store binstubs.
 # So instead of running `bin/rails` like the doc says, just run `rails`
 # Same for `./node_modules/.bin` and nodejs
@@ -66,7 +39,39 @@ export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 
 export BUNDLER_EDITOR=code
-export EDITOR=code
+if command -v code >/dev/null 2>&1; then export EDITOR=code; else export EDITOR=vim; fi
 
 # Set ipdb as the default Python debugger
 export PYTHONBREAKPOINT=ipdb.set_trace
+
+# pnpm
+export PNPM_HOME="/Users/rabi/Library/pnpm"
+export PATH="$PNPM_HOME:$PATH"
+# pnpm end
+# Added by Windsurf
+export PATH="/Users/rabi/.codeium/windsurf/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
+
+# bun completions
+[ -s "/Users/rabi/.bun/_bun" ] && source "/Users/rabi/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+command -v mise >/dev/null 2>&1 && eval "$(mise activate zsh)"
+
+
+
+
+# Rust toolchain
+[[ -f "$HOME/.cargo/env" ]] && . "$HOME/.cargo/env"
+# Quidkey Platform Tools - START
+export MISE_EXPERIMENTAL=1
+export QK_MISE_ROOT="$HOME"
+export QK_DEV_ROOT="${QK_DEV_ROOT:-$HOME/code/quidkey/services/quidkey-monorepo}"
+if [[ -d "$QK_DEV_ROOT" ]]; then
+  export PATH="$QK_DEV_ROOT/platform/bin:$PATH"
+  command -v qk >/dev/null 2>&1 && eval "$(qk completion install --print)"
+fi
+# Quidkey Platform Tools - END
+[[ -d /opt/homebrew/opt/mysql-client/bin ]] && export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
