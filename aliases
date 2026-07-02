@@ -12,3 +12,13 @@ alias stt="echo 'Launching VS Code instead of Sublime Text... (cf ~/.aliases)' &
 #   qkvps        -> session "claude" (default)
 #   qkvps core   -> session "core"   (independent session — e.g. for a 2nd Ghostty tab)
 qkvps() { mosh dev@quidkey-claude -- tmux new -A -s "${1:-claude}"; }
+
+# 1Password service-account helper (Quidkey Claude VPS). Loads the scoped token
+# into ONLY the given command's env — never globally. Token lives in
+# ~/.config/op/token (chmod 600), read-only to the *_local vaults.
+#   opdev pnpm docker:stack ...   |   opdev op inject -i apps/core/env.default
+opdev() {
+  local tok="$HOME/.config/op/token"
+  [ -r "$tok" ] || { echo "opdev: no $tok — paste your 1Password service-account token there (chmod 600)"; return 1; }
+  OP_SERVICE_ACCOUNT_TOKEN="$(cat "$tok")" "$@"
+}
