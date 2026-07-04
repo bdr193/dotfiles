@@ -5,6 +5,9 @@
 # ALWAYS a tmux session to attach; every ACTION is a --flag. So `qkvps core`
 # can only ever mean "attach session core" — no verb/name ambiguity.
 #
+# Short flags go to the read/navigate actions (--list/--claude/--resume); the
+# state-changing ones (--kill/--clean) are long-only, so you type them out.
+#
 # Runs on the Mac; reaches the box over mosh (interactive) / ssh (one-shot).
 # Set QKVPS_DRYRUN=1 to print the interactive commands instead of running them.
 set -uo pipefail
@@ -28,15 +31,16 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
 
   qkvps [NAME]              attach — or create — tmux session NAME (default: claude)
   qkvps -l, --list          list tmux sessions on the box
-  qkvps -k, --kill NAME     kill tmux session NAME
-  qkvps -c, --clean [-f]    show orphaned mosh-servers   (-f / --force reaps them)
-      --claude              list resumable Claude conversations (id · cwd · label)
+  qkvps -c, --claude        list resumable Claude conversations (id · cwd · label)
   qkvps -r, --resume ID     resume a Claude conversation (ssh + cd its cwd + claude --resume)
+  qkvps     --kill NAME     kill tmux session NAME
+  qkvps     --clean [-f]    show orphaned mosh-servers   (-f / --force reaps them)
   qkvps -h, --help          this help
       --json                machine-readable output (with --list / --claude)
 
 Rule: if the first argument starts with '-' it is an action; otherwise it is a
-session name. So `qkvps core` always attaches session "core".
+session name. So `qkvps core` always attaches session "core". Short flags are the
+read actions (-l/-c/-r); the state-changing ones (--kill/--clean) are long-only.
 EOF
 }
 
@@ -98,11 +102,11 @@ while [ $# -gt 0 ]; do
     --completion)  cat "$DIR/../completions/_qkvps"; exit 0 ;;
     --json)        JSON=1; shift ;;
     -l|--list)     action="list";   shift ;;
-    -k|--kill)     action="kill";   arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    -c|--clean)    action="clean";  shift ;;
-    -f|--force)    force=1;         shift ;;
-    --claude)      action="claude"; shift ;;
+    -c|--claude)   action="claude"; shift ;;
     -r|--resume)   action="resume"; arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --kill)        action="kill";   arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --clean)       action="clean";  shift ;;
+    -f|--force)    force=1;         shift ;;
     --)            shift; break ;;
     -*)            echo "qkvps: unknown flag: $1" >&2; usage >&2; exit 2 ;;
     *)             action="${action:-attach}"; arg="$1"; shift ;;
@@ -112,8 +116,8 @@ done
 case "${action:-attach}" in
   attach) attach "$arg" ;;
   list)   list_sessions ;;
-  kill)   kill_session "$arg" ;;
-  clean)  clean_mosh "$force" ;;
   claude) list_claude ;;
   resume) resume_claude "$arg" ;;
+  kill)   kill_session "$arg" ;;
+  clean)  clean_mosh "$force" ;;
 esac
