@@ -128,8 +128,29 @@ upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
   local -a out=()
 
   if [ ${#srcs[@]} -eq 0 ]; then
-    echo "qkvps: --upload needs a file path" >&2
-    return 2
+    local ssdir newest
+    # 1) clipboard image (needs pngpaste; reused temp file, no cleanup churn)
+    if command -v pngpaste >/dev/null 2>&1; then
+      local clipdir="${TMPDIR:-/tmp}/qkvps"; mkdir -p "$clipdir"
+      pngpaste "$clipdir/clipboard.png" >/dev/null 2>&1 && srcs=("$clipdir/clipboard.png")
+    fi
+    # 2) newest screenshot
+    if [ ${#srcs[@]} -eq 0 ]; then
+      if [ -n "${QKVPS_SCREENSHOT_DIR:-}" ]; then
+        ssdir="$QKVPS_SCREENSHOT_DIR"
+      else
+        ssdir="$(defaults read com.apple.screencapture location 2>/dev/null)"
+        ssdir="${ssdir/#\~/$HOME}"; [ -d "$ssdir" ] || ssdir="$HOME/Desktop"
+      fi
+      newest="$(ls -t "$ssdir"/Screenshot* 2>/dev/null | head -1)"
+      [ -n "$newest" ] && srcs=("$newest")
+    fi
+    # 3) nothing found
+    if [ ${#srcs[@]} -eq 0 ]; then
+      local hint=""; command -v pngpaste >/dev/null 2>&1 || hint=" (install pngpaste for clipboard images)"
+      echo "qkvps: nothing to upload — no path, no clipboard image, no recent screenshot${hint}" >&2
+      return 2
+    fi
   fi
 
   for s in "${srcs[@]}"; do
