@@ -71,7 +71,16 @@ export QK_MISE_ROOT="$HOME"
 export QK_DEV_ROOT="${QK_DEV_ROOT:-$HOME/code/quidkey/services/quidkey-monorepo}"
 if [[ -d "$QK_DEV_ROOT" ]]; then
   export PATH="$QK_DEV_ROOT/platform/bin:$PATH"
-  command -v qk >/dev/null 2>&1 && eval "$(qk completion install --print)"
+  command -v qk >/dev/null 2>&1 && eval "$(qk completion zsh 2>/dev/null)"
 fi
 # Quidkey Platform Tools - END
+
+# qkvps — Claude-on-VPS CLI (Rabea's Mac only; dir is absent elsewhere -> skipped).
+# Mirrors the qk block above: add its bin to PATH, then eval its printed completion.
+QKVPS_BIN="$HOME/code/bdr193/dotfiles/bin"
+if [[ -d "$QKVPS_BIN" ]]; then
+  export PATH="$QKVPS_BIN:$PATH"
+  command -v qkvps >/dev/null 2>&1 && eval "$(qkvps --completion 2>/dev/null)"
+fi
+
 [[ -d /opt/homebrew/opt/mysql-client/bin ]] && export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"

@@ -8,10 +8,9 @@ alias serve='ruby -run -e httpd . -p 8000' # Or python -m SimpleHTTPServer :)
 # NOTE: On Q3 2021, Le Wagon decided to change the Web Dev curriculum default text editor
 alias stt="echo 'Launching VS Code instead of Sublime Text... (cf ~/.aliases)' && code ."
 
-# Connect to the Quidkey Claude VPS and attach a persistent tmux session.
-#   qkvps        -> session "claude" (default)
-#   qkvps core   -> session "core"   (independent session — e.g. for a 2nd Ghostty tab)
-qkvps() { mosh dev@quidkey-claude -- tmux new -A -s "${1:-claude}"; }
+# Claude-on-VPS: `qkvps` is now a full CLI at dotfiles/bin/qkvps (on PATH + completion
+# wired in zshrc). `qkvps` attaches the default session; `qkvps core` a named one;
+# `qkvps --list|--kill|--clean|--claude|--resume|--help` for everything else.
 
 # 1Password service-account helper (Quidkey Claude VPS). Loads the scoped token
 # into ONLY the given command's env — never globally. Token lives in

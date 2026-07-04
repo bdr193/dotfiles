@@ -1,0 +1,44 @@
+# qkvps zsh completion — eval-loaded from ~/.zshrc via `eval "$(qkvps --completion)"`
+# (mirrors how the qk CLI loads its completion). Dynamic values (session names,
+# conversation ids) are fetched from the box over ssh with a short timeout.
+
+_qkvps() {
+  local -a actions
+  actions=(
+    '-l:list tmux sessions'            '--list:list tmux sessions'
+    '-k:kill a tmux session'           '--kill:kill a tmux session'
+    '-c:show/reap orphaned mosh-servers' '--clean:show/reap orphaned mosh-servers'
+    '-f:with --clean, reap them'       '--force:with --clean, reap them'
+    '--claude:list resumable Claude conversations'
+    '-r:resume a Claude conversation'  '--resume:resume a Claude conversation'
+    '--json:machine-readable output'
+    '-h:help'                          '--help:help'
+  )
+
+  # first arg, and it's not a flag -> a session name to attach
+  if (( CURRENT == 2 )) && [[ "${words[2]}" != -* ]]; then
+    _qkvps_sessions; return
+  fi
+  # argument expected by the previous flag
+  case "${words[CURRENT-1]}" in
+    -k|--kill)   _qkvps_sessions; return ;;
+    -r|--resume) _qkvps_ids;      return ;;
+  esac
+  _describe -t actions 'qkvps action' actions
+}
+
+_qkvps_sessions() {
+  local -a s
+  s=(${(f)"$(ssh -o BatchMode=yes -o ConnectTimeout=4 dev@quidkey-claude \
+        'tmux ls -F "#{session_name}" 2>/dev/null')"})
+  (( ${#s} )) && _describe -t sessions 'tmux session' s
+}
+
+_qkvps_ids() {
+  local -a ids
+  ids=(${(f)"$(ssh -o BatchMode=yes -o ConnectTimeout=4 dev@quidkey-claude \
+        'for f in ~/.claude/projects/*/*.jsonl; do [ -e "$f" ] && basename "$f" .jsonl | cut -c1-8; done 2>/dev/null')"})
+  (( ${#ids} )) && _describe -t ids 'claude conversation' ids
+}
+
+compdef _qkvps qkvps
