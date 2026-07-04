@@ -37,6 +37,9 @@ runcmd() {
   fi
 }
 
+# membership test: _in_list NEEDLE ITEM...   (avoids bash-4 associative arrays)
+_in_list() { local x="$1"; shift; local e; for e in "$@"; do [ "$e" = "$x" ] && return 0; done; return 1; }
+
 usage() {
   cat <<'EOF'
 qkvps — CLI for the Claude-on-VPS (quidkey-claude)
@@ -121,7 +124,7 @@ REMOTE
 
 upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
   local -a srcs=("$@")
-  local ts base safe name remote_dir s
+  local ts base safe remote_dir s
   local -a out=()
 
   if [ ${#srcs[@]} -eq 0 ]; then
@@ -145,15 +148,34 @@ upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
       || { echo "qkvps: could not prepare ~/uploads on $HOST" >&2; return 1; }
   fi
 
+  case "$remote_dir" in
+    /*) ;;
+    *)  echo "qkvps: unexpected upload dir from $HOST: '$remote_dir'" >&2; return 1 ;;
+  esac
+
+  local -a used=()
+  local stem ext cand n
   for s in "${srcs[@]}"; do
     base="$(basename -- "$s")"
     safe="$(printf '%s' "$base" | tr -cs 'A-Za-z0-9._-' '-')"   # spaces/odd chars -> '-'
-    name="${ts}-${safe}"
-    runcmd scp -q "$s" "$HOST:$remote_dir/$name" \
+    # split extension so a disambiguating index lands before it (foo.png -> foo-2.png)
+    case "$safe" in
+      ?*.*) stem="${safe%.*}"; ext=".${safe##*.}" ;;
+      *)    stem="$safe";      ext="" ;;
+    esac
+    cand="${ts}-${stem}${ext}"; n=1
+    # two same-basename sources in one batch would collide on the box; make unique
+    while _in_list "$cand" ${used[@]+"${used[@]}"}; do
+      n=$((n+1)); cand="${ts}-${stem}-${n}${ext}"
+    done
+    used+=("$cand")
+    runcmd scp -q "$s" "$HOST:$remote_dir/$cand" \
       || { echo "qkvps: scp failed for $s" >&2; return 1; }
-    out+=("$remote_dir/$name")
+    out+=("$remote_dir/$cand")
   done
 
+  # NOTE: under QKVPS_DRYRUN the "DRYRUN:" echoes above also land on stdout;
+  # only in a real run is stdout exactly the server path(s).
   printf '%s\n' "${out[@]}"                       # stdout = the server path(s)
   printf '%s\n' "${out[@]}" | runcmd pbcopy 2>/dev/null || true
   echo "qkvps: uploaded ${#out[@]} file(s) -> path copied to clipboard" >&2
