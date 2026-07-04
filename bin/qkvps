@@ -8,6 +8,9 @@
 # Short flags go to the read/navigate actions (--list/--claude/--resume); the
 # state-changing ones (--kill/--clean) are long-only, so you type them out.
 #
+# Exception: --upload also gets a short -u — it's additive (no data loss), unlike
+# kill/clean, and it's run constantly.
+#
 # Runs on the Mac; reaches the box over mosh (interactive) / ssh (one-shot).
 # Set QKVPS_DRYRUN=1 to print the interactive commands instead of running them.
 set -uo pipefail
@@ -22,6 +25,15 @@ run() {
     printf 'DRYRUN:'; printf ' %q' "$@"; printf '\n'
   else
     exec "$@"
+  fi
+}
+
+# Like run(), but does NOT exec — for multi-step actions (upload). Prints under DRYRUN.
+runcmd() {
+  if [ -n "${QKVPS_DRYRUN:-}" ]; then
+    printf 'DRYRUN:'; printf ' %q' "$@"; printf '\n'
+  else
+    "$@"
   fi
 }
 
@@ -107,8 +119,48 @@ REMOTE
   run mosh "$HOST" -- tmux attach -t "$session"
 }
 
+upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
+  local -a srcs=("$@")
+  local ts base safe name remote_dir s
+  local -a out=()
+
+  if [ ${#srcs[@]} -eq 0 ]; then
+    echo "qkvps: --upload needs a file path" >&2
+    return 2
+  fi
+
+  for s in "${srcs[@]}"; do
+    [ -e "$s" ] || { echo "qkvps: no such file: $s" >&2; return 2; }
+    [ -d "$s" ] && { echo "qkvps: '$s' is a directory (not supported)" >&2; return 2; }
+  done
+
+  ts="${QKVPS_NOW:-$(date +%Y%m%d-%H%M%S)}"
+
+  # ensure the box dir exists and learn its absolute path (one round-trip)
+  if [ -n "${QKVPS_DRYRUN:-}" ]; then
+    printf 'DRYRUN:'; printf ' %q' ssh "$HOST" 'mkdir -p ~/uploads && cd ~/uploads && pwd'; printf '\n'
+    remote_dir="/home/dev/uploads"
+  else
+    remote_dir="$(ssh "$HOST" 'mkdir -p ~/uploads && cd ~/uploads && pwd')" \
+      || { echo "qkvps: could not prepare ~/uploads on $HOST" >&2; return 1; }
+  fi
+
+  for s in "${srcs[@]}"; do
+    base="$(basename -- "$s")"
+    safe="$(printf '%s' "$base" | tr -cs 'A-Za-z0-9._-' '-')"   # spaces/odd chars -> '-'
+    name="${ts}-${safe}"
+    runcmd scp -q "$s" "$HOST:$remote_dir/$name" \
+      || { echo "qkvps: scp failed for $s" >&2; return 1; }
+    out+=("$remote_dir/$name")
+  done
+
+  printf '%s\n' "${out[@]}"                       # stdout = the server path(s)
+  printf '%s\n' "${out[@]}" | runcmd pbcopy 2>/dev/null || true
+  echo "qkvps: uploaded ${#out[@]} file(s) -> path copied to clipboard" >&2
+}
+
 # ---- arg parse: flags = actions, bare word = session name --------------------
-JSON=""; action=""; arg=""; force=""
+JSON=""; action=""; arg=""; force=""; upload_files=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)     usage; exit 0 ;;
@@ -119,12 +171,21 @@ while [ $# -gt 0 ]; do
     -r|--resume)   action="resume"; arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --kill)        action="kill";   arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --clean)       action="clean";  shift ;;
+    -u|--upload)   action="upload"; shift ;;
     -f|--force)    force=1;         shift ;;
     --)            shift; break ;;
     -*)            echo "qkvps: unknown flag: $1" >&2; usage >&2; exit 2 ;;
-    *)             action="${action:-attach}"; arg="$1"; shift ;;
+    *)             if [ "${action:-}" = upload ]; then
+                     upload_files+=("$1")
+                   else
+                     action="${action:-attach}"; arg="$1"
+                   fi
+                   shift ;;
   esac
 done
+
+# args after `--` belong to --upload too (lets you upload names starting with '-')
+if [ "${action:-}" = upload ] && [ $# -gt 0 ]; then upload_files+=("$@"); fi
 
 case "${action:-attach}" in
   attach) attach "$arg" ;;
@@ -133,4 +194,5 @@ case "${action:-attach}" in
   resume) resume_claude "$arg" ;;
   kill)   kill_session "$arg" ;;
   clean)  clean_mosh "$force" ;;
+  upload) upload ${upload_files[@]+"${upload_files[@]}"} ;;
 esac
