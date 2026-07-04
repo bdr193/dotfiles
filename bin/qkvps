@@ -87,11 +87,24 @@ resume_claude() {  # $1 = id (full or short prefix)
   if [ "$rc" -ne 0 ]; then echo "qkvps: $line" >&2; return 1; fi
   full="${line%%$'\t'*}"; cwd="${line#*$'\t'}"
   [ -n "$full" ] || { echo "qkvps: could not resolve '$id'" >&2; return 1; }
-  echo "resuming ${full:0:8} in ${cwd:-<home>}"
-  local -a t=(tmux new-session -A -s "claude-${full:0:8}")
-  [ -n "$cwd" ] && t+=(-c "$cwd")
-  t+=("claude --resume $full")
-  run mosh "$HOST" -- "${t[@]}"
+  local session="claude-${full:0:8}"
+  echo "resuming ${full:0:8} in ${cwd:-<home>}  (tmux session: $session)"
+  # Set up the session over ssh first. A normal interactive tmux pane sources
+  # ~/.zshrc (so `claude` is on PATH); a bare pane *command* would NOT be — that
+  # made an earlier version exit instantly. So create the pane, then type the
+  # resume command into it. Only on first create; re-running --resume reattaches.
+  # Typing it as keys also means: if claude exits, you're left on a shell in cwd.
+  if [ -z "${QKVPS_DRYRUN:-}" ]; then
+    ssh "$HOST" bash -s -- "$session" "$cwd" "$full" <<'REMOTE'
+sess=$1; dir=$2; full=$3
+if ! tmux has-session -t "$sess" 2>/dev/null; then
+  if [ -n "$dir" ]; then tmux new-session -d -s "$sess" -c "$dir"; else tmux new-session -d -s "$sess"; fi
+  sleep 1   # let the pane shell finish sourcing ~/.zshrc before typing into it
+  tmux send-keys -t "$sess" "claude --resume $full" Enter
+fi
+REMOTE
+  fi
+  run mosh "$HOST" -- tmux attach -t "$session"
 }
 
 # ---- arg parse: flags = actions, bare word = session name --------------------
