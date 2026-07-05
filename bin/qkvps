@@ -182,6 +182,7 @@ upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
     base="$(basename -- "$s")"
     safe="$(printf '%s' "$base" | tr -cs 'A-Za-z0-9._-' '-')"   # spaces/odd chars -> '-'
     # split extension so a disambiguating index lands before it (foo.png -> foo-2.png)
+    # only the final suffix counts as the extension (a.tar.gz -> a.tar-2.gz on collision)
     case "$safe" in
       ?*.*) stem="${safe%.*}"; ext=".${safe##*.}" ;;
       *)    stem="$safe";      ext="" ;;
@@ -200,8 +201,14 @@ upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
   # NOTE: under QKVPS_DRYRUN the "DRYRUN:" echoes above also land on stdout;
   # only in a real run is stdout exactly the server path(s).
   printf '%s\n' "${out[@]}"                       # stdout = the server path(s)
-  printf '%s\n' "${out[@]}" | runcmd pbcopy 2>/dev/null || true
-  echo "qkvps: uploaded ${#out[@]} file(s) -> path copied to clipboard" >&2
+  # clipboard: path(s) joined by newlines but with NO trailing newline, so pasting
+  # a single path into the Claude pane doesn't auto-submit before you add context.
+  local clip; clip="$(printf '%s\n' "${out[@]}")"   # $(...) strips trailing newline(s)
+  if printf '%s' "$clip" | runcmd pbcopy 2>/dev/null; then
+    echo "qkvps: uploaded ${#out[@]} file(s) -> path copied to clipboard" >&2
+  else
+    echo "qkvps: uploaded ${#out[@]} file(s) (clipboard copy unavailable)" >&2
+  fi
 }
 
 # ---- arg parse: flags = actions, bare word = session name --------------------
