@@ -10,6 +10,7 @@ _qkvps() {
     '-r:resume a Claude conversation'  '--resume:resume a Claude conversation'
     '--kill:kill a tmux session'
     '--clean:show/reap orphaned mosh-servers'
+    '-u:upload file(s) to the box'     '--upload:upload file(s) to the box'
     '-f:with --clean, reap them'       '--force:with --clean, reap them'
     '--json:machine-readable output'
     '-h:help'                          '--help:help'
@@ -18,6 +19,10 @@ _qkvps() {
   # first arg, and it's not a flag -> a session name to attach
   if (( CURRENT == 2 )) && [[ "${words[2]}" != -* ]]; then
     _qkvps_sessions; return
+  fi
+  # once -u/--upload is on the line, remaining args are local file paths
+  if (( ${words[(I)--upload]} || ${words[(I)-u]} )); then
+    _files; return
   fi
   # argument expected by the previous flag
   case "${words[CURRENT-1]}" in

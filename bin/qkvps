@@ -50,6 +50,8 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
   qkvps -r, --resume ID     resume a Claude conversation (ssh + cd its cwd + claude --resume)
   qkvps     --kill NAME     kill tmux session NAME
   qkvps     --clean [-f]    show orphaned mosh-servers   (-f / --force reaps them)
+  qkvps -u, --upload [F...] upload file(s) to the box; prints + copies the server path
+                            (no arg = clipboard image, else newest Desktop screenshot)
   qkvps -h, --help          this help
       --json                machine-readable output (with --list / --claude)
 
