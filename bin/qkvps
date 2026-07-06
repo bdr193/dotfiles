@@ -251,8 +251,15 @@ logs_stack() {  # "$@" = services (default: core console)
     esac
   done
   local script='set -u
+export TERM=xterm-256color   # we ssh -t, forwarding the client TERM. Ghostty
+                             # (xterm-ghostty) and other exotic TERMs are absent
+                             # from the box terminfo, which makes EVERY tmux call
+                             # below fail (missing/unsuitable terminal) and the
+                             # window guard wrongly report no core window. NOTE:
+                             # no apostrophes here -- script is bash single-quoted.
 dir="$HOME/.qkvps/logs"; mkdir -p "$dir"
-files=""
+set --   # collect log paths as positional params: "$@" splits correctly under
+         # the box shell (zsh), where unquoted $var is NOT word-split like bash.
 for s in '"${svcs[*]}"'; do
   if ! tmux has-session -t stack 2>/dev/null || ! tmux list-windows -t stack -F "#{window_name}" | grep -qx "$s"; then
     echo "qkvps --logs: no \"$s\" window in the stack session; run: qkvps --up $s" >&2; exit 1
@@ -261,10 +268,10 @@ for s in '"${svcs[*]}"'; do
     tmux capture-pane -p -t "stack:$s" -S -500 >> "$dir/$s.log" 2>/dev/null || :
     tmux pipe-pane -t "stack:$s" "cat >> $dir/$s.log"
   fi
-  files="$files $dir/$s.log"
+  set -- "$@" "$dir/$s.log"
 done
-echo "tailing$files  (Ctrl-C to stop)"
-exec tail -n 200 -F $files'
+echo "tailing $*  (Ctrl-C to stop)"
+exec tail -n 200 -F "$@"'
   if _is_box; then
     run bash -c "$script"
   else
