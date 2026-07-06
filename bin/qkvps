@@ -52,6 +52,7 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
   qkvps     --up [SVC...]   bring up dev services (no arg = all: deps + core + console)
   qkvps     --down [SVC...] stop dev services (no arg = core + console; deps stay up)
   qkvps     --forward [SVC...] tunnel box service(s) to your Mac via ssh -L (no arg = console + core)
+  qkvps     --logs [SVC...] stream core/console dev-server logs (no arg = both; Ctrl-C to stop)
   qkvps -l, --list          list tmux sessions on the box
   qkvps -c, --claude        list resumable Claude conversations (id · cwd · label)
   qkvps -r, --resume ID     resume a Claude conversation (ssh + cd its cwd + claude --resume)
@@ -64,6 +65,7 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
 
 Services (--up/--down): core  console  deps  meili  fake-tm  fake-flinks
 Forward (--forward):    console  core  meili  fake-tm  fake-flinks  (Mac-side ssh -L)
+Logs (--logs):          core  console  (mirrored dev-server output; deps → docker logs -f)
 --up/--down run locally when you're already on the box, else over ssh.
 
 Rule: if the first argument starts with '-' it is an action; otherwise it is a
@@ -234,6 +236,42 @@ forward_stack() {  # "$@" = services (default: console core)
   run ssh -N "${lflags[@]}" "$HOST"
 }
 
+# `--logs [SVC…]`: stream core/console dev-server output to your terminal
+# (read-only; foreground, Ctrl-C to stop). No arg = both, interleaved. Lazily
+# mirrors each pane to ~/.qkvps/logs/<svc>.log via tmux pipe-pane (so it works on
+# already-running servers, no restart) after seeding recent scrollback, then
+# tail -F. Host-aware (local on the box, else ssh -t). Deps log to Docker.
+logs_stack() {  # "$@" = services (default: core console)
+  local -a svcs=("$@"); [ $# -eq 0 ] && svcs=(core console)
+  local s
+  for s in "${svcs[@]}"; do
+    case "$s" in
+      core|console) ;;
+      *) echo "qkvps --logs: only core/console have file logs (deps → docker logs -f). Got '$s'." >&2; return 2 ;;
+    esac
+  done
+  local script='set -u
+dir="$HOME/.qkvps/logs"; mkdir -p "$dir"
+files=""
+for s in '"${svcs[*]}"'; do
+  if ! tmux has-session -t stack 2>/dev/null || ! tmux list-windows -t stack -F "#{window_name}" | grep -qx "$s"; then
+    echo "qkvps --logs: no \"$s\" window in the stack session; run: qkvps --up $s" >&2; exit 1
+  fi
+  if [ "$(tmux display -p -t "stack:$s" "#{pane_pipe}" 2>/dev/null)" != "1" ]; then
+    tmux capture-pane -p -t "stack:$s" -S -500 >> "$dir/$s.log" 2>/dev/null || :
+    tmux pipe-pane -t "stack:$s" "cat >> $dir/$s.log"
+  fi
+  files="$files $dir/$s.log"
+done
+echo "tailing$files  (Ctrl-C to stop)"
+exec tail -n 200 -F $files'
+  if _is_box; then
+    run bash -c "$script"
+  else
+    run ssh -t "$HOST" "$script"
+  fi
+}
+
 list_claude() {
   if [ -n "${JSON:-}" ]; then
     ssh "$HOST" python3 - --json < "$LISTER"
@@ -371,13 +409,14 @@ while [ $# -gt 0 ]; do
     --up)          action="up";     shift ;;
     --down)        action="down";   shift ;;
     --forward)     action="forward"; shift ;;
+    --logs)        action="logs";    shift ;;
     -u|--upload)   action="upload"; shift ;;
     -f|--force)    force=1;         shift ;;
     --)            shift; break ;;
     -*)            echo "qkvps: unknown flag: $1" >&2; usage >&2; exit 2 ;;
     *)             case "${action:-}" in
                      upload)   upload_files+=("$1") ;;
-                     up|down|forward)  targets+=("$1") ;;
+                     up|down|forward|logs)  targets+=("$1") ;;
                      *)        action="${action:-attach}"; arg="$1" ;;
                    esac
                    shift ;;
@@ -397,5 +436,6 @@ case "${action:-attach}" in
   up)     up_stack   ${targets[@]+"${targets[@]}"} ;;
   down)   down_stack ${targets[@]+"${targets[@]}"} ;;
   forward) forward_stack ${targets[@]+"${targets[@]}"} ;;
+  logs)   logs_stack ${targets[@]+"${targets[@]}"} ;;
   upload) upload ${upload_files[@]+"${upload_files[@]}"} ;;
 esac
