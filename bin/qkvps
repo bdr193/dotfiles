@@ -15,7 +15,7 @@
 # Set QKVPS_DRYRUN=1 to print the interactive commands instead of running them.
 set -uo pipefail
 
-HOST="dev@quidkey-claude"
+HOST="${QKVPS_HOST:-dev@quidkey-claude}"   # override for tests / a differently-named box
 # Backing services qkvps brings up for dev (docker compose project "quidkey").
 # Postgres is intentionally excluded: on the box 5432 is taken, so postgres runs
 # separately as the core-pg container on :5433 and core's .env points there.
@@ -51,6 +51,7 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
   qkvps [NAME]              attach — or create — tmux session NAME (default: claude)
   qkvps     --up [SVC...]   bring up dev services (no arg = all: deps + core + console)
   qkvps     --down [SVC...] stop dev services (no arg = core + console; deps stay up)
+  qkvps     --forward [SVC...] tunnel box service(s) to your Mac via ssh -L (no arg = console + core)
   qkvps -l, --list          list tmux sessions on the box
   qkvps -c, --claude        list resumable Claude conversations (id · cwd · label)
   qkvps -r, --resume ID     resume a Claude conversation (ssh + cd its cwd + claude --resume)
@@ -62,6 +63,7 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
       --json                machine-readable output (with --list / --claude)
 
 Services (--up/--down): core  console  deps  meili  fake-tm  fake-flinks
+Forward (--forward):    console  core  meili  fake-tm  fake-flinks  (Mac-side ssh -L)
 --up/--down run locally when you're already on the box, else over ssh.
 
 Rule: if the first argument starts with '-' it is an action; otherwise it is a
@@ -111,13 +113,12 @@ clean_mosh() {  # $1 = force flag
 # resolve because send-keys lands in an interactive pane that sources ~/.zshrc
 # (docker/tmux only need the default PATH).
 
+# True when this shell is running ON the box itself (not the Mac).
+_is_box() { [ "$(hostname 2>/dev/null)" = "${HOST#*@}" ]; }
+
 # Run SCRIPT on the box: locally when we ARE the box, else over ssh. DRYRUN-aware.
 on_box() {  # $1 = script text
-  if [ "$(hostname 2>/dev/null)" = "${HOST#*@}" ]; then
-    runcmd bash -c "$1"
-  else
-    runcmd ssh "$HOST" "$1"
-  fi
+  if _is_box; then runcmd bash -c "$1"; else runcmd ssh "$HOST" "$1"; fi
 }
 
 # Split targets into app windows (apps[]) and docker services (dsvcs[]/all_deps).
@@ -203,6 +204,34 @@ echo \"==> stopping deps: $DEV_DEPS\"; docker compose -f docker-compose.deps.yml
 echo \"==> stopping deps: ${dsvcs[*]}\"; docker compose -f docker-compose.deps.yml stop ${dsvcs[*]}"
   fi
   on_box "$remote"
+}
+
+# `--forward [SVC…]`: open ssh -L tunnels so box services are reachable at
+# localhost:<port> on your Mac — keeps the localhost origin the apps expect
+# (console's CORS/cookies/redirects), unlike hitting quidkey-claude:<port> over
+# Tailscale. Mac-side only; foreground (Ctrl-C to stop). No arg = console + core.
+forward_stack() {  # "$@" = services (default: console core)
+  if _is_box; then
+    echo "qkvps --forward: you're already on the box — its services are local (console :3000, core :5679, meili :7700, fakes :8081/:8082). Run this from your Mac." >&2
+    return 2
+  fi
+  local -a svcs=("$@"); [ $# -eq 0 ] && svcs=(console core)
+  local -a lflags=() urls=(); local s port
+  for s in "${svcs[@]}"; do
+    case "$s" in
+      console)                      port=3000 ;;
+      core)                         port=5679 ;;
+      meili|meilisearch)            port=7700 ;;
+      tm|fake-tm|fake-transfermate) port=8081 ;;
+      flinks|fake-flinks)           port=8082 ;;
+      *) echo "qkvps --forward: unknown service '$s' (want: console core meili fake-tm fake-flinks)" >&2; return 2 ;;
+    esac
+    lflags+=(-L "${port}:localhost:${port}")
+    urls+=("http://localhost:${port}  ($s)")
+  done
+  echo "forwarding to your Mac (Ctrl-C to stop):"
+  printf '  %s\n' "${urls[@]}"
+  run ssh -N "${lflags[@]}" "$HOST"
 }
 
 list_claude() {
@@ -341,13 +370,14 @@ while [ $# -gt 0 ]; do
     --clean)       action="clean";  shift ;;
     --up)          action="up";     shift ;;
     --down)        action="down";   shift ;;
+    --forward)     action="forward"; shift ;;
     -u|--upload)   action="upload"; shift ;;
     -f|--force)    force=1;         shift ;;
     --)            shift; break ;;
     -*)            echo "qkvps: unknown flag: $1" >&2; usage >&2; exit 2 ;;
     *)             case "${action:-}" in
                      upload)   upload_files+=("$1") ;;
-                     up|down)  targets+=("$1") ;;
+                     up|down|forward)  targets+=("$1") ;;
                      *)        action="${action:-attach}"; arg="$1" ;;
                    esac
                    shift ;;
@@ -366,5 +396,6 @@ case "${action:-attach}" in
   clean)  clean_mosh "$force" ;;
   up)     up_stack   ${targets[@]+"${targets[@]}"} ;;
   down)   down_stack ${targets[@]+"${targets[@]}"} ;;
+  forward) forward_stack ${targets[@]+"${targets[@]}"} ;;
   upload) upload ${upload_files[@]+"${upload_files[@]}"} ;;
 esac

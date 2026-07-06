@@ -12,6 +12,7 @@ _qkvps() {
     '--clean:show/reap orphaned mosh-servers'
     '--up:bring up dev services (default: all)'
     '--down:stop dev services (default: core + console)'
+    '--forward:tunnel box service(s) to your Mac (ssh -L)'
     '-u:upload file(s) to the box'     '--upload:upload file(s) to the box'
     '-f:with --clean, reap them'       '--force:with --clean, reap them'
     '--json:machine-readable output'
@@ -27,7 +28,7 @@ _qkvps() {
     _files; return
   fi
   # once --up/--down is on the line, remaining args are dev-service names
-  if (( ${words[(I)--up]} || ${words[(I)--down]} )); then
+  if (( ${words[(I)--up]} || ${words[(I)--down]} || ${words[(I)--forward]} )); then
     _qkvps_services; return
   fi
   # argument expected by the previous flag
