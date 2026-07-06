@@ -16,6 +16,10 @@
 set -uo pipefail
 
 HOST="dev@quidkey-claude"
+# Backing services qkvps brings up for dev (docker compose project "quidkey").
+# Postgres is intentionally excluded: on the box 5432 is taken, so postgres runs
+# separately as the core-pg container on :5433 and core's .env points there.
+DEV_DEPS="meilisearch fake-transfermate fake-flinks"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LISTER="$DIR/../vps-claude-sessions.py"   # shipped alongside, in dotfiles/
 
@@ -45,6 +49,8 @@ usage() {
 qkvps — CLI for the Claude-on-VPS (quidkey-claude)
 
   qkvps [NAME]              attach — or create — tmux session NAME (default: claude)
+  qkvps     --up [SVC...]   bring up dev services (no arg = all: deps + core + console)
+  qkvps     --down [SVC...] stop dev services (no arg = core + console; deps stay up)
   qkvps -l, --list          list tmux sessions on the box
   qkvps -c, --claude        list resumable Claude conversations (id · cwd · label)
   qkvps -r, --resume ID     resume a Claude conversation (ssh + cd its cwd + claude --resume)
@@ -54,6 +60,9 @@ qkvps — CLI for the Claude-on-VPS (quidkey-claude)
                             (no arg = clipboard image, else newest Desktop screenshot)
   qkvps -h, --help          this help
       --json                machine-readable output (with --list / --claude)
+
+Services (--up/--down): core  console  deps  meili  fake-tm  fake-flinks
+--up/--down run locally when you're already on the box, else over ssh.
 
 Rule: if the first argument starts with '-' it is an action; otherwise it is a
 session name. So `qkvps core` always attaches session "core". Short flags are the
@@ -87,6 +96,113 @@ clean_mosh() {  # $1 = force flag
   else
     echo "Tip: 'qkvps --clean -f' reaps them (tmux/Claude sessions survive; reconnect with qkvps)."
   fi
+}
+
+# ---- dev stack: backing services + core/console dev servers ------------------
+# `--up [SVC...]` brings dev services up (idempotent) and returns; it does NOT
+# attach (use `qkvps stack`). No SVC = everything: deps + core + console. A SVC
+# is `core`, `console`, `deps` (meili + fakes; see DEV_DEPS), or a single dep by
+# alias (meili, fake-tm, fake-flinks); unknown names are rejected. Postgres is
+# NOT managed here: it runs separately as core-pg on :5433. Works from your Mac
+# (ssh) or on the box (local) via on_box().
+#
+# `pnpm --filter` (not `turbo run dev`) is deliberate: it dodges the fake-* port
+# clashes and turbo's strict env-mode stripping OP_SERVICE_ACCOUNT_TOKEN. pnpm/op
+# resolve because send-keys lands in an interactive pane that sources ~/.zshrc
+# (docker/tmux only need the default PATH).
+
+# Run SCRIPT on the box: locally when we ARE the box, else over ssh. DRYRUN-aware.
+on_box() {  # $1 = script text
+  if [ "$(hostname 2>/dev/null)" = "${HOST#*@}" ]; then
+    runcmd bash -c "$1"
+  else
+    runcmd ssh "$HOST" "$1"
+  fi
+}
+
+# Split targets into app windows (apps[]) and docker services (dsvcs[]/all_deps).
+# Assigns to the CALLER's locals via dynamic scope; callers declare them first.
+_resolve_targets() {  # "$@" = targets
+  apps=(); dsvcs=(); all_deps=""
+  local t
+  for t in "$@"; do
+    case "$t" in
+      core|console)                 apps+=("$t") ;;
+      deps)                         all_deps=1 ;;
+      meili|meilisearch)            dsvcs+=(meilisearch) ;;
+      tm|fake-tm|fake-transfermate) dsvcs+=(fake-transfermate) ;;
+      flinks|fake-flinks)           dsvcs+=(fake-flinks) ;;
+      *) echo "qkvps: unknown service '$t' (want: core console deps meili fake-tm fake-flinks)" >&2; return 2 ;;
+    esac
+  done
+}
+
+up_stack() {  # "$@" = targets (default: all)
+  local -a targets=("$@"); [ $# -eq 0 ] && targets=(deps core console)
+  local -a apps dsvcs; local all_deps
+  _resolve_targets ${targets[@]+"${targets[@]}"} || return 2
+
+  local remote
+  remote="$(cat <<'REMOTE'
+set -uo pipefail
+repo="$HOME/quidkey/services/quidkey-monorepo"
+cd "$repo" || { echo "qkvps: no monorepo at $repo" >&2; exit 1; }
+
+ensure_win() {  # $1=window  $2=pnpm filter
+  if ! tmux has-session -t stack 2>/dev/null; then
+    tmux new-session -d -s stack -n "$1" -c "$repo"
+  elif tmux list-windows -t stack -F '#{window_name}' | grep -qx "$1"; then
+    echo "  $1: already running"; return
+  else
+    tmux new-window -t stack -n "$1" -c "$repo"
+  fi
+  sleep 1   # let the pane source ~/.zshrc so pnpm/op are on PATH
+  tmux send-keys -t "stack:$1" 'OP_SERVICE_ACCOUNT_TOKEN=$(cat ~/.config/op/token) pnpm --filter '"$2"' run dev' Enter
+  echo "  $1: started"
+}
+REMOTE
+)"
+  if [ -n "$all_deps" ]; then
+    remote+="
+echo \"==> deps: $DEV_DEPS\"; docker compose -f docker-compose.deps.yml up -d $DEV_DEPS || exit 1"
+  elif [ "${#dsvcs[@]}" -gt 0 ]; then
+    remote+="
+echo \"==> deps: ${dsvcs[*]}\"; docker compose -f docker-compose.deps.yml up -d ${dsvcs[*]} || exit 1"
+  fi
+  local a filter
+  for a in ${apps[@]+"${apps[@]}"}; do
+    case "$a" in core) filter=quidkey-core ;; console) filter=quidkey-console ;; esac
+    remote+="
+ensure_win $a $filter"
+  done
+  remote+="
+echo; echo \"up: [${targets[*]}]   attach: qkvps stack\""
+
+  on_box "$remote"
+}
+
+down_stack() {  # "$@" = targets (default: whole app stack; deps left running)
+  if [ $# -eq 0 ]; then
+    on_box 'tmux kill-session -t stack 2>/dev/null && echo "stack: stopped (core + console). Docker deps left running." || echo "stack: not running (nothing to stop)."'
+    return
+  fi
+  local -a apps dsvcs; local all_deps
+  _resolve_targets "$@" || return 2
+
+  local remote='cd "$HOME/quidkey/services/quidkey-monorepo" || exit 1'
+  local a
+  for a in ${apps[@]+"${apps[@]}"}; do
+    remote+="
+tmux kill-window -t stack:$a 2>/dev/null && echo \"  $a: stopped\" || echo \"  $a: not running\""
+  done
+  if [ -n "$all_deps" ]; then
+    remote+="
+echo \"==> stopping deps: $DEV_DEPS\"; docker compose -f docker-compose.deps.yml stop $DEV_DEPS"
+  elif [ "${#dsvcs[@]}" -gt 0 ]; then
+    remote+="
+echo \"==> stopping deps: ${dsvcs[*]}\"; docker compose -f docker-compose.deps.yml stop ${dsvcs[*]}"
+  fi
+  on_box "$remote"
 }
 
 list_claude() {
@@ -212,7 +328,7 @@ upload() {  # "$@" = explicit file paths (no-arg auto-source added in Task 2)
 }
 
 # ---- arg parse: flags = actions, bare word = session name --------------------
-JSON=""; action=""; arg=""; force=""; upload_files=()
+JSON=""; action=""; arg=""; force=""; upload_files=(); targets=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help)     usage; exit 0 ;;
@@ -223,15 +339,17 @@ while [ $# -gt 0 ]; do
     -r|--resume)   action="resume"; arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --kill)        action="kill";   arg="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --clean)       action="clean";  shift ;;
+    --up)          action="up";     shift ;;
+    --down)        action="down";   shift ;;
     -u|--upload)   action="upload"; shift ;;
     -f|--force)    force=1;         shift ;;
     --)            shift; break ;;
     -*)            echo "qkvps: unknown flag: $1" >&2; usage >&2; exit 2 ;;
-    *)             if [ "${action:-}" = upload ]; then
-                     upload_files+=("$1")
-                   else
-                     action="${action:-attach}"; arg="$1"
-                   fi
+    *)             case "${action:-}" in
+                     upload)   upload_files+=("$1") ;;
+                     up|down)  targets+=("$1") ;;
+                     *)        action="${action:-attach}"; arg="$1" ;;
+                   esac
                    shift ;;
   esac
 done
@@ -246,5 +364,7 @@ case "${action:-attach}" in
   resume) resume_claude "$arg" ;;
   kill)   kill_session "$arg" ;;
   clean)  clean_mosh "$force" ;;
+  up)     up_stack   ${targets[@]+"${targets[@]}"} ;;
+  down)   down_stack ${targets[@]+"${targets[@]}"} ;;
   upload) upload ${upload_files[@]+"${upload_files[@]}"} ;;
 esac
