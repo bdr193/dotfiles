@@ -75,12 +75,11 @@ if [[ -d "$QK_DEV_ROOT" ]]; then
 fi
 # Quidkey Platform Tools - END
 
-# qkvps — Claude-on-VPS CLI (Rabea's Mac only; dir is absent elsewhere -> skipped).
-# Mirrors the qk block above: add its bin to PATH, then eval its printed completion.
-QKVPS_BIN="$HOME/code/bdr193/dotfiles/bin"
-if [[ -d "$QKVPS_BIN" ]]; then
-  export PATH="$QKVPS_BIN:$PATH"
-  command -v qkvps >/dev/null 2>&1 && eval "$(qkvps --completion 2>/dev/null)"
-fi
+# qkvps: Claude-on-VPS CLI, lives in the monorepo (platform/qkvps). platform/bin
+# is on PATH via the Quidkey Platform Tools block; this only loads the zsh
+# completion, resolving the CLI directly so it works regardless of block order.
+QKVPS_CLI="${QK_DEV_ROOT:-$HOME/code/quidkey/services/quidkey-monorepo}/platform/bin/qkvps"
+[[ -x "$QKVPS_CLI" ]] && eval "$("$QKVPS_CLI" --completion 2>/dev/null)"
+unset QKVPS_CLI
 
 [[ -d /opt/homebrew/opt/mysql-client/bin ]] && export PATH="/opt/homebrew/opt/mysql-client/bin:$PATH"
